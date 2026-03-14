@@ -192,7 +192,7 @@ pub fn spawn_server(shared_model: SharedModel) -> io::Result<SocketServerRuntime
     thread::Builder::new()
         .name("cmux-linux-socket".to_string())
         .spawn(move || accept_loop(listener, shared_model))
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error.to_string()))?;
+        .map_err(|error| io::Error::other(error.to_string()))?;
 
     Ok(SocketServerRuntime { socket_path })
 }
@@ -2933,10 +2933,11 @@ fn debug_command_palette_rename_input_interact_payload(
 ) -> MethodResult {
     let window_id = window_target_id(model, params)?;
     let state = model.palette_state(window_id);
-    if state.mode == CommandPaletteMode::RenameInput {
-        if model.rename_select_all && !state.text.is_empty() {
-            model.select_all_palette_text(window_id);
-        }
+    if state.mode == CommandPaletteMode::RenameInput
+        && model.rename_select_all
+        && !state.text.is_empty()
+    {
+        model.select_all_palette_text(window_id);
     }
     debug_command_palette_rename_input_selection_payload(
         model,

@@ -1,4 +1,5 @@
 use crate::capabilities::linux_v1_capabilities;
+use crate::config::ColorScheme;
 use crate::model::{AppModel, SharedModel};
 use crate::session::{configured_session_path, load_state, save_state};
 use crate::socket::{configured_socket_path, remove_socket_file, spawn_server};
@@ -84,7 +85,13 @@ fn build_ui(
     server_status: String,
     session_path: PathBuf,
 ) {
-    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
+    let config = model.lock().config.clone();
+    let color_scheme = match config.color_scheme {
+        ColorScheme::System => adw::ColorScheme::Default,
+        ColorScheme::Dark => adw::ColorScheme::ForceDark,
+        ColorScheme::Light => adw::ColorScheme::ForceLight,
+    };
+    adw::StyleManager::default().set_color_scheme(color_scheme);
     install_css();
     let capabilities = linux_v1_capabilities();
     let feature_summary = capabilities.enabled_feature_labels().join(",");
@@ -356,7 +363,7 @@ fn current_revision(model: &SharedModel) -> u64 {
     model.lock().revision()
 }
 
-fn persist_session_snapshot(session_path: &PathBuf, model: &SharedModel) {
+fn persist_session_snapshot(session_path: &std::path::Path, model: &SharedModel) {
     let snapshot = model.lock().snapshot_state();
 
     if let Err(error) = save_state(session_path, &snapshot) {
@@ -522,9 +529,11 @@ fn create_window_shell(
     sidebar_box.set_margin_start(8);
     sidebar_box.set_margin_end(8);
 
+    let sidebar_width = model.lock().config.sidebar_width;
+
     let sidebar = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
-        .min_content_width(280)
+        .min_content_width(sidebar_width)
         .child(&sidebar_box)
         .build();
 
@@ -536,7 +545,7 @@ fn create_window_shell(
         .orientation(gtk::Orientation::Horizontal)
         .wide_handle(true)
         .build();
-    main_split.set_position(280);
+    main_split.set_position(sidebar_width);
     main_split.set_start_child(Some(&sidebar));
     main_split.set_end_child(Some(&content_box));
 
@@ -695,7 +704,7 @@ fn render_sidebar(
         .map(|window| window.selected_workspace_id)
         .unwrap_or(Uuid::nil());
 
-    let rows: Vec<(
+    type WorkspaceRow = (
         WorkspaceId,
         String,
         Option<String>,
@@ -703,7 +712,8 @@ fn render_sidebar(
         usize,
         usize,
         bool,
-    )> = snapshot
+    );
+    let rows: Vec<WorkspaceRow> = snapshot
         .workspaces
         .iter()
         .filter(|workspace| workspace.window_id == window_id)

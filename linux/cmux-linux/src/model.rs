@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::state::{AppState, PaneId, SurfaceId, WindowId, WorkspaceId};
 use crate::terminal_host::TerminalBridge;
 use std::collections::{BTreeMap, HashMap};
@@ -118,6 +119,7 @@ impl HandleRegistry {
 #[derive(Debug)]
 pub struct AppModel {
     pub state: AppState,
+    pub config: Config,
     pub socket_path: String,
     pub terminal_bridge: TerminalBridge,
     pub app_focus_override: Option<AppFocusOverride>,
@@ -147,6 +149,7 @@ impl AppModel {
     ) -> Self {
         let mut model = Self {
             state,
+            config: Config::load(),
             socket_path,
             terminal_bridge,
             app_focus_override: None,

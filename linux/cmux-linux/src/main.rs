@@ -1,5 +1,6 @@
 mod app;
 mod capabilities;
+mod config;
 mod model;
 mod session;
 mod socket;

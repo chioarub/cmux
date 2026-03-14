@@ -189,12 +189,15 @@ impl VteSession {
 }
 
 fn vte_session(model: &SharedModel, surface_id: SurfaceId) -> VteSession {
+    let config = model.lock().config.clone();
     let terminal = vte4::Terminal::new();
     terminal.set_hexpand(true);
     terminal.set_vexpand(true);
-    terminal.set_scrollback_lines(20_000);
+    terminal.set_scrollback_lines(config.scrollback_lines);
     terminal.set_mouse_autohide(true);
     terminal.set_allow_hyperlink(true);
+    let font_desc = gtk::pango::FontDescription::from_string(&config.font_description());
+    terminal.set_font(Some(&font_desc));
     seed_restored_transcript(model, surface_id, &terminal);
 
     let _ = model.lock().state.update_surface_terminal_health(
