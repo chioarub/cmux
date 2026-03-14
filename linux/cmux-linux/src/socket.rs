@@ -6,17 +6,26 @@ use crate::state::{Pane, SplitOrientation, Surface, SurfaceKind, Workspace};
 use crate::terminal_host::terminal_backend_status;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use gtk::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::process::Command;
 use std::thread;
 use uuid::Uuid;
 
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/cmux-linux.sock";
+
+fn default_socket_path() -> String {
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        if !runtime_dir.trim().is_empty() {
+            return format!("{}/cmux.sock", runtime_dir);
+        }
+    }
+    DEFAULT_SOCKET_PATH.to_string()
+}
 
 const WINDOW_MULTI_UNSUPPORTED_METHODS: &[&str] = &[];
 
@@ -169,16 +178,11 @@ pub fn configured_socket_path() -> String {
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         })
-        .unwrap_or_else(|| DEFAULT_SOCKET_PATH.to_string())
+        .unwrap_or_else(default_socket_path)
 }
 
 pub fn spawn_server(shared_model: SharedModel) -> io::Result<SocketServerRuntime> {
-    let socket_path = {
-        let model = shared_model
-            .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "linux app model lock poisoned"))?;
-        model.socket_path.clone()
-    };
+    let socket_path = shared_model.lock().socket_path.clone();
 
     if fs::metadata(&socket_path).is_ok() {
         let _ = fs::remove_file(&socket_path);
@@ -251,17 +255,7 @@ pub fn handle_request_line(shared_model: &SharedModel, line: &str) -> String {
         }
     };
 
-    let mut model = match shared_model.lock() {
-        Ok(model) => model,
-        Err(_) => {
-            return encode_response(error_response(
-                request.id,
-                "internal_error",
-                "linux app model lock poisoned",
-                None,
-            ));
-        }
-    };
+    let mut model = shared_model.lock();
 
     encode_response(dispatch_request(&mut model, request))
 }
@@ -3438,8 +3432,14 @@ fn deliver_notification(title: &str, subtitle: &str, body: &str) -> bool {
         summary.push_str(" - ");
         summary.push_str(subtitle);
     }
-    let status = Command::new("notify-send").arg(summary).arg(body).status();
-    matches!(status, Ok(status) if status.success())
+    let notification = gtk::gio::Notification::new(&summary);
+    notification.set_body(Some(body));
+    if let Some(app) = gtk::gio::Application::default() {
+        app.send_notification(None, &notification);
+        true
+    } else {
+        false
+    }
 }
 
 fn param_string<'a>(params: &'a Map<String, Value>, key: &str) -> Option<&'a str> {

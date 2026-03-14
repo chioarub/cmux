@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=cmux
+Comment=Terminal multiplexer
+Exec=cmux-linux
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
+Keywords=terminal;multiplexer;shell;
+StartupWMClass=dev.cmux.linux

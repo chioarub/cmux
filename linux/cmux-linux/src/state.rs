@@ -1971,6 +1971,12 @@ impl AppState {
             .ok_or_else(|| format!("surface {surface_id} not found"))?;
         let previous_unread = surface.unread;
         surface.transcript.push_str(text);
+        const MAX_TRANSCRIPT: usize = 512 * 1024;
+        if surface.transcript.len() > MAX_TRANSCRIPT {
+            let start = surface.transcript.len() - MAX_TRANSCRIPT;
+            let start = surface.transcript.ceil_char_boundary(start);
+            surface.transcript.drain(..start);
+        }
         surface.unread_activity = unread;
         surface.sync_unread();
         if surface.unread != previous_unread {
@@ -2058,6 +2064,12 @@ impl AppState {
             .ok_or_else(|| format!("surface {surface_id} not found"))?;
         let previous_unread = surface.unread;
         surface.transcript = text;
+        const MAX_TRANSCRIPT: usize = 512 * 1024;
+        if surface.transcript.len() > MAX_TRANSCRIPT {
+            let start = surface.transcript.len() - MAX_TRANSCRIPT;
+            let start = surface.transcript.ceil_char_boundary(start);
+            surface.transcript.drain(..start);
+        }
         surface.unread_activity = unread;
         surface.sync_unread();
         if surface.unread != previous_unread {

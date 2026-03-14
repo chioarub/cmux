@@ -8,7 +8,7 @@ use crate::state::{
 };
 use crate::terminal_host::{TerminalBridge, TerminalRuntime};
 use adw::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -85,6 +85,7 @@ fn build_ui(
     session_path: PathBuf,
 ) {
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::Default);
+    install_css();
     let capabilities = linux_v1_capabilities();
     let feature_summary = capabilities.enabled_feature_labels().join(",");
     let backend_status = terminal_runtime.borrow().backend_status().clone();
@@ -312,12 +313,13 @@ fn build_ui(
     install_default_accelerators(app);
 
     let last_revision = Rc::new(RefCell::new(current_revision(&model)));
+    let session_dirty = Rc::new(Cell::new(false));
     {
         let model = model.clone();
         let render = render.clone();
         let terminal_runtime = terminal_runtime.clone();
         let last_revision = last_revision.clone();
-        let session_path = session_path.clone();
+        let session_dirty = session_dirty.clone();
         gtk::glib::timeout_add_local(Duration::from_millis(60), move || {
             terminal_runtime.borrow_mut().pump_commands();
             let revision = current_revision(&model);
@@ -325,6 +327,17 @@ fn build_ui(
             if revision != *observed_revision {
                 *observed_revision = revision;
                 render.as_ref()();
+                session_dirty.set(true);
+            }
+            gtk::glib::ControlFlow::Continue
+        });
+    }
+    {
+        let model = model.clone();
+        let session_dirty = session_dirty.clone();
+        let session_path = session_path.clone();
+        gtk::glib::timeout_add_seconds_local(3, move || {
+            if session_dirty.replace(false) {
                 persist_session_snapshot(&session_path, &model);
             }
             gtk::glib::ControlFlow::Continue
@@ -336,18 +349,15 @@ fn build_ui(
 }
 
 fn snapshot_state(model: &SharedModel) -> Option<AppState> {
-    model.lock().ok().map(|guard| guard.snapshot_state())
+    Some(model.lock().snapshot_state())
 }
 
 fn current_revision(model: &SharedModel) -> u64 {
-    model.lock().ok().map(|guard| guard.revision()).unwrap_or(0)
+    model.lock().revision()
 }
 
 fn persist_session_snapshot(session_path: &PathBuf, model: &SharedModel) {
-    let snapshot = match model.lock() {
-        Ok(guard) => guard.snapshot_state(),
-        Err(_) => return,
-    };
+    let snapshot = model.lock().snapshot_state();
 
     if let Err(error) = save_state(session_path, &snapshot) {
         eprintln!(
@@ -369,9 +379,7 @@ fn install_state_action<F>(
 {
     let action = gtk::gio::SimpleAction::new(name, None);
     action.connect_activate(move |_, _| {
-        if let Ok(mut guard) = model.lock() {
-            handler(&mut guard.state);
-        }
+        handler(&mut model.lock().state);
         render.as_ref()();
         focus_selected_surface(&model, &terminal_runtime);
     });
@@ -393,10 +401,24 @@ fn install_default_accelerators(app: &adw::Application) {
     app.set_accels_for_action("app.surface-next", &["<Primary><Shift>bracketright"]);
     app.set_accels_for_action("app.surface-previous", &["<Primary><Shift>bracketleft"]);
     app.set_accels_for_action("app.pane-last", &["<Primary><Alt>grave"]);
-    app.set_accels_for_action("app.pane-focus-left", &["<Primary><Alt>Left"]);
-    app.set_accels_for_action("app.pane-focus-right", &["<Primary><Alt>Right"]);
-    app.set_accels_for_action("app.pane-focus-up", &["<Primary><Alt>Up"]);
-    app.set_accels_for_action("app.pane-focus-down", &["<Primary><Alt>Down"]);
+    app.set_accels_for_action("app.pane-focus-left", &["<Primary><Shift>Left"]);
+    app.set_accels_for_action("app.pane-focus-right", &["<Primary><Shift>Right"]);
+    app.set_accels_for_action("app.pane-focus-up", &["<Primary><Shift>Up"]);
+    app.set_accels_for_action("app.pane-focus-down", &["<Primary><Shift>Down"]);
+}
+
+fn install_css() {
+    let css = gtk::CssProvider::new();
+    css.load_from_data(
+        "paned > separator { min-width: 6px; min-height: 6px; background: @borders; }",
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 }
 
 fn reconcile_window_shells(
@@ -547,9 +569,7 @@ fn create_window_shell(
             if !window.is_active() {
                 return;
             }
-            if let Ok(mut guard) = model.lock() {
-                let _ = guard.state.focus_window(window_id);
-            }
+            let _ = model.lock().state.focus_window(window_id);
             focus_selected_surface(&model, &terminal_runtime);
         });
     }
@@ -639,9 +659,7 @@ fn connect_window_action_button(
     let model = model.clone();
     let terminal_runtime = terminal_runtime.clone();
     button.connect_clicked(move |_| {
-        if let Ok(mut guard) = model.lock() {
-            let _ = guard.state.focus_window(window_id);
-        }
+        let _ = model.lock().state.focus_window(window_id);
         focus_selected_surface(&model, &terminal_runtime);
         app.activate_action(action_name, None);
     });
@@ -651,10 +669,7 @@ fn focus_selected_surface(model: &SharedModel, terminal_runtime: &Rc<RefCell<Ter
     let model = model.clone();
     let terminal_runtime = terminal_runtime.clone();
     gtk::glib::idle_add_local_once(move || {
-        let surface_id = model
-            .lock()
-            .ok()
-            .and_then(|guard| guard.state.current_surface_id());
+        let surface_id = model.lock().state.current_surface_id();
         if let Some(surface_id) = surface_id {
             terminal_runtime.borrow_mut().focus_surface(surface_id);
         }
@@ -763,9 +778,7 @@ fn render_sidebar(
         let model = model.clone();
         let terminal_runtime = terminal_runtime.clone();
         button.connect_clicked(move |_| {
-            if let Ok(mut guard) = model.lock() {
-                let _ = guard.state.select_workspace(workspace_id);
-            }
+            let _ = model.lock().state.select_workspace(workspace_id);
             focus_selected_surface(&model, &terminal_runtime);
         });
 
@@ -844,8 +857,11 @@ fn build_workspace_layout(
                     SplitOrientation::Vertical => gtk::Orientation::Vertical,
                 })
                 .wide_handle(true)
+                .shrink_start_child(false)
+                .shrink_end_child(false)
+                .resize_start_child(true)
+                .resize_end_child(true)
                 .build();
-            paned.set_position(520);
             paned.set_start_child(Some(&build_workspace_layout(
                 model,
                 terminal_runtime,
@@ -899,9 +915,7 @@ fn build_pane_view(
         let terminal_runtime = terminal_runtime.clone();
         notebook.connect_switch_page(move |_, _, index| {
             if let Some(surface_id) = surface_ids.get(index as usize) {
-                if let Ok(mut guard) = model.lock() {
-                    let _ = guard.state.focus_surface(*surface_id);
-                }
+                let _ = model.lock().state.focus_surface(*surface_id);
                 focus_selected_surface(&model, &terminal_runtime);
             }
         });

@@ -1,7 +1,8 @@
 use crate::state::{AppState, PaneId, SurfaceId, WindowId, WorkspaceId};
 use crate::terminal_host::TerminalBridge;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use uuid::Uuid;
 
 pub type SharedModel = Arc<Mutex<AppModel>>;

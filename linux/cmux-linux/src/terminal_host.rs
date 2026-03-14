@@ -197,15 +197,13 @@ fn vte_session(model: &SharedModel, surface_id: SurfaceId) -> VteSession {
     terminal.set_allow_hyperlink(true);
     seed_restored_transcript(model, surface_id, &terminal);
 
-    if let Ok(mut guard) = model.lock() {
-        let _ = guard.state.update_surface_terminal_health(
-            surface_id,
-            TerminalHealth {
-                realized: true,
-                ..TerminalHealth::default()
-            },
-        );
-    }
+    let _ = model.lock().state.update_surface_terminal_health(
+        surface_id,
+        TerminalHealth {
+            realized: true,
+            ..TerminalHealth::default()
+        },
+    );
 
     let ready = Rc::new(Cell::new(false));
     let child_pid = Rc::new(Cell::new(None));
@@ -221,9 +219,7 @@ fn vte_session(model: &SharedModel, surface_id: SurfaceId) -> VteSession {
         let child_pid = child_pid.clone();
         terminal.connect_contents_changed(move |terminal| {
             if let Some(text) = capture_terminal_text(terminal) {
-                if let Ok(mut guard) = model.lock() {
-                    let _ = guard.state.replace_terminal_text(surface_id, text);
-                }
+                let _ = model.lock().state.replace_terminal_text(surface_id, text);
             }
             sync_surface_current_directory(
                 &model,
@@ -265,30 +261,49 @@ fn vte_session(model: &SharedModel, surface_id: SurfaceId) -> VteSession {
         let model = model.clone();
         let focus_controller = gtk::EventControllerFocus::new();
         focus_controller.connect_enter(move |_| {
-            if let Ok(mut guard) = model.lock() {
-                let _ = guard.state.focus_surface(surface_id);
-            }
+            let _ = model.lock().state.focus_surface(surface_id);
         });
         terminal.add_controller(focus_controller);
+    }
+
+    {
+        let terminal_ref = terminal.clone();
+        let key_controller =
+            gtk::EventControllerKey::new();
+        key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        key_controller.connect_key_pressed(move |_, keyval, _, modifiers| {
+            let ctrl_shift = gtk::gdk::ModifierType::CONTROL_MASK
+                | gtk::gdk::ModifierType::SHIFT_MASK;
+            if modifiers & ctrl_shift == ctrl_shift {
+                if keyval == gtk::gdk::Key::C {
+                    terminal_ref.copy_clipboard_format(vte4::Format::Text);
+                    return gtk::glib::Propagation::Stop;
+                }
+                if keyval == gtk::gdk::Key::V {
+                    terminal_ref.paste_clipboard();
+                    return gtk::glib::Propagation::Stop;
+                }
+            }
+            gtk::glib::Propagation::Proceed
+        });
+        terminal.add_controller(key_controller);
     }
 
     {
         let model = model.clone();
         let child_pid = child_pid.clone();
         terminal.connect_child_exited(move |_, status| {
-            if let Ok(mut guard) = model.lock() {
-                let _ = guard.state.update_surface_terminal_health(
-                    surface_id,
-                    TerminalHealth {
-                        realized: true,
-                        subprocess_start_attempted: true,
-                        child_pid: child_pid.get().map(|pid| pid.0),
-                        child_exited: true,
-                        child_exit_code: (status >= 0).then_some(status as u32),
-                        ..TerminalHealth::default()
-                    },
-                );
-            }
+            let _ = model.lock().state.update_surface_terminal_health(
+                surface_id,
+                TerminalHealth {
+                    realized: true,
+                    subprocess_start_attempted: true,
+                    child_pid: child_pid.get().map(|pid| pid.0),
+                    child_exited: true,
+                    child_exit_code: (status >= 0).then_some(status as u32),
+                    ..TerminalHealth::default()
+                },
+            );
         });
     }
 
@@ -324,16 +339,14 @@ fn spawn_shell(
     let queue = pending_input.clone();
     let callback_terminal = terminal.clone();
 
-    if let Ok(mut guard) = model.lock() {
-        let _ = guard.state.update_surface_terminal_health(
-            surface_id,
-            TerminalHealth {
-                realized: true,
-                subprocess_start_attempted: true,
-                ..TerminalHealth::default()
-            },
-        );
-    }
+    let _ = model.lock().state.update_surface_terminal_health(
+        surface_id,
+        TerminalHealth {
+            realized: true,
+            subprocess_start_attempted: true,
+            ..TerminalHealth::default()
+        },
+    );
 
     terminal.spawn_async(
         vte4::PtyFlags::DEFAULT,
@@ -351,38 +364,36 @@ fn spawn_shell(
                 for chunk in queue.borrow_mut().drain(..) {
                     let _ = write_terminal_input(&callback_terminal, &chunk);
                 }
-                if let Ok(mut guard) = model.lock() {
-                    let _ = guard.state.update_surface_terminal_health(
-                        surface_id,
-                        TerminalHealth {
-                            realized: true,
-                            subprocess_start_attempted: true,
-                            child_pid: Some(pid.0),
-                            ..TerminalHealth::default()
-                        },
-                    );
-                    if let Some(text) = capture_terminal_text(&callback_terminal) {
-                        let _ = guard.state.replace_terminal_text(surface_id, text);
-                    }
+                let mut guard = model.lock();
+                let _ = guard.state.update_surface_terminal_health(
+                    surface_id,
+                    TerminalHealth {
+                        realized: true,
+                        subprocess_start_attempted: true,
+                        child_pid: Some(pid.0),
+                        ..TerminalHealth::default()
+                    },
+                );
+                if let Some(text) = capture_terminal_text(&callback_terminal) {
+                    let _ = guard.state.replace_terminal_text(surface_id, text);
                 }
             }
             Err(error) => {
-                if let Ok(mut guard) = model.lock() {
-                    let message =
-                        format!("[cmux linux] failed to spawn terminal process: {error}\n");
-                    let _ = guard.state.append_terminal_text(surface_id, &message);
-                    let _ = guard.state.update_surface_terminal_health(
-                        surface_id,
-                        TerminalHealth {
-                            realized: true,
-                            subprocess_start_attempted: true,
-                            startup_error: Some(format!(
-                                "failed to spawn terminal process: {error}"
-                            )),
-                            ..TerminalHealth::default()
-                        },
-                    );
-                }
+                let mut guard = model.lock();
+                let message =
+                    format!("[cmux linux] failed to spawn terminal process: {error}\n");
+                let _ = guard.state.append_terminal_text(surface_id, &message);
+                let _ = guard.state.update_surface_terminal_health(
+                    surface_id,
+                    TerminalHealth {
+                        realized: true,
+                        subprocess_start_attempted: true,
+                        startup_error: Some(format!(
+                            "failed to spawn terminal process: {error}"
+                        )),
+                        ..TerminalHealth::default()
+                    },
+                );
             }
         },
     );
@@ -405,19 +416,14 @@ fn capture_terminal_text(terminal: &vte4::Terminal) -> Option<String> {
 }
 
 fn surface_exists(model: &SharedModel, surface_id: SurfaceId) -> bool {
-    model
-        .lock()
-        .ok()
-        .and_then(|guard| guard.state.locate_surface(surface_id))
-        .is_some()
+    model.lock().state.locate_surface(surface_id).is_some()
 }
 
 fn resolve_surface_working_directory(model: &SharedModel, surface_id: SurfaceId) -> Option<String> {
-    model.lock().ok().and_then(|guard| {
-        let (workspace_id, _) = guard.state.locate_surface(surface_id)?;
-        let workspace = guard.state.workspace(workspace_id)?;
-        workspace.current_directory.clone()
-    })
+    let guard = model.lock();
+    let (workspace_id, _) = guard.state.locate_surface(surface_id)?;
+    let workspace = guard.state.workspace(workspace_id)?;
+    workspace.current_directory.clone()
 }
 
 fn resolve_child_current_directory(child_pid: gtk::glib::Pid) -> Option<String> {
@@ -430,11 +436,7 @@ fn sync_surface_current_directory(
     surface_id: SurfaceId,
     current_directory: Option<String>,
 ) {
-    if let Ok(mut guard) = model.lock() {
-        let _ = guard
-            .state
-            .update_surface_current_directory(surface_id, current_directory);
-    }
+    let _ = model.lock().state.update_surface_current_directory(surface_id, current_directory);
 }
 
 fn write_terminal_input(terminal: &vte4::Terminal, bytes: &[u8]) -> Result<(), String> {
@@ -471,16 +473,16 @@ fn normalize_terminal_input(text: &str) -> Vec<u8> {
 }
 
 fn seed_restored_transcript(model: &SharedModel, surface_id: SurfaceId, terminal: &vte4::Terminal) {
-    let transcript = model
-        .lock()
-        .ok()
-        .and_then(|guard| {
-            let (workspace_id, _) = guard.state.locate_surface(surface_id)?;
-            let workspace = guard.state.workspace(workspace_id)?;
-            let surface = workspace.surface(surface_id)?;
-            Some(surface.transcript.clone())
-        })
-        .unwrap_or_default();
+    let transcript = {
+        let guard = model.lock();
+        guard.state.locate_surface(surface_id)
+            .and_then(|(workspace_id, _)| {
+                let workspace = guard.state.workspace(workspace_id)?;
+                let surface = workspace.surface(surface_id)?;
+                Some(surface.transcript.clone())
+            })
+            .unwrap_or_default()
+    };
 
     if !transcript.is_empty() {
         terminal.feed(transcript.as_bytes());
