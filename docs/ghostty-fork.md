@@ -83,6 +83,28 @@ touch the same stale-frame mitigation path and tend to conflict in the same file
 
 The fork branch HEAD is now the section 6 zsh redraw commit.
 
+### 7) Linux embedded GtkGLArea bootstrap for cmux
+
+- Files:
+  - `include/ghostty.h`
+  - `src/apprt/embedded.zig`
+  - `src/renderer/OpenGL.zig`
+- Summary:
+  - Adds a Linux platform tag to the embed ABI and a small default-host wrapper for `cmux-linux`.
+  - Allows `cmux-linux` to build `libghostty` on Linux and bootstrap embedded Ghostty surfaces through a GtkGLArea host.
+  - Keeps the Linux Ghostty path explicitly experimental while the terminal I/O side is still being stabilized.
+
+### 8) Linux embedded Ghostty resources + process diagnostics
+
+- Files:
+  - `include/ghostty.h`
+  - `src/Surface.zig`
+  - `src/apprt/embedded.zig`
+- Summary:
+  - Adds a Linux embed entrypoint that accepts an explicit resources directory so source-built cmux can point libghostty at `zig-out/share/ghostty`.
+  - Exposes per-surface embedded process diagnostics (`pid`, `exit_code`, `runtime_ms`) for Linux hosts.
+  - Keeps the diagnostics host-only and focused on debugging the still-incomplete Linux embedded terminal startup path.
+
 ## Upstreamed fork changes
 
 ### cursor-click-to-move respects OSC 133 click-to-move

@@ -1679,6 +1679,10 @@ class TerminalController {
         let startedAt = ProcessInfo.processInfo.systemUptime
         #endif
 
+        if let unsupported = v2UnsupportedMethodResult(method: method) {
+            return v2Result(id: id, unsupported)
+        }
+
         let response = withSocketCommandPolicy(commandKey: method, isV2: true) {
             switch method {
         case "system.ping":
@@ -2082,7 +2086,44 @@ class TerminalController {
         return response
     }
 
-    private func v2Capabilities() -> [String: Any] {
+    private func v2CapabilityProfile() -> V2CapabilityProfile {
+        var features: [String: Bool] = [
+            "terminal": true,
+            "workspace": true,
+            "pane": true,
+            "surface": true,
+            "notification": true,
+            "session_restore": true,
+            "window_multi": true,
+            "browser": true,
+            "debug": false
+        ]
+#if DEBUG
+        features["debug"] = true
+#endif
+        return V2CapabilityProfile(
+            platformId: "macos",
+            frontend: "swiftui-appkit",
+            features: features,
+            unsupportedMethods: []
+        )
+    }
+
+    private func v2UnsupportedMethodResult(method: String) -> V2CallResult? {
+        let profile = v2CapabilityProfile()
+        guard profile.unsupportedMethods.contains(method) else { return nil }
+        return .err(
+            code: "not_supported",
+            message: "\(method) is not supported on \(profile.frontend)",
+            data: [
+                "method": method,
+                "platform": profile.platformId,
+                "frontend": profile.frontend
+            ]
+        )
+    }
+
+    private func v2AdvertisedMethods() -> [String] {
         var methods: [String] = [
             "system.ping",
             "system.capabilities",
@@ -2263,13 +2304,24 @@ class TerminalController {
             "debug.window.screenshot",
         ])
 #endif
+        return methods.sorted()
+    }
 
+    private func v2Capabilities() -> [String: Any] {
+        let profile = v2CapabilityProfile()
         return [
             "protocol": "cmux-socket",
             "version": 2,
             "socket_path": socketPath,
             "access_mode": accessMode.rawValue,
-            "methods": methods.sorted()
+            "platform": [
+                "id": profile.platformId,
+                "frontend": profile.frontend,
+                "window_multi": profile.features["window_multi"] ?? false
+            ],
+            "features": profile.features,
+            "unsupported_methods": Array(profile.unsupportedMethods).sorted(),
+            "methods": v2AdvertisedMethods()
         ]
     }
 
@@ -2595,6 +2647,13 @@ class TerminalController {
     private enum V2CallResult {
         case ok(Any)
         case err(code: String, message: String, data: Any?)
+    }
+
+    private struct V2CapabilityProfile {
+        let platformId: String
+        let frontend: String
+        let features: [String: Bool]
+        let unsupportedMethods: Set<String>
     }
 
     private func v2Result(id: Any?, _ res: V2CallResult) -> String {

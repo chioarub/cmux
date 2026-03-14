@@ -27,6 +27,12 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from capability_matrix import (
+    load_capability_matrix,
+    method_contract_status as capability_method_contract_status,
+    supported_test_groups as capability_supported_test_groups,
+)
+
 
 class cmuxError(Exception):
     """Exception raised for cmux errors."""
@@ -330,6 +336,25 @@ class cmux:
 
     def capabilities(self) -> dict:
         return dict(self._call("system.capabilities") or {})
+
+    def capability_features(self) -> Dict[str, bool]:
+        raw = self.capabilities().get("features") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return {str(key): bool(value) for key, value in raw.items()}
+
+    def capability_platform(self) -> Dict[str, Any]:
+        raw = self.capabilities().get("platform") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return dict(raw)
+
+    def capability_method_status(self, method: str) -> str:
+        return capability_method_contract_status(self.capabilities(), method)
+
+    def capability_test_groups(self) -> List[str]:
+        groups = capability_supported_test_groups(load_capability_matrix(), self.capabilities())
+        return sorted(groups)
 
     def identify(self, caller: Optional[dict] = None) -> dict:
         params: Dict[str, Any] = {}

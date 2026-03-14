@@ -1,0 +1,85 @@
+{
+  "createdAt": 0,
+  "version": 1,
+  "windows": [
+    {
+      "display": {
+        "displayID": 1,
+        "frame": {
+          "height": 1080,
+          "width": 1920,
+          "x": 0,
+          "y": 0
+        },
+        "visibleFrame": {
+          "height": 1040,
+          "width": 1920,
+          "x": 0,
+          "y": 40
+        }
+      },
+      "frame": {
+        "height": 900,
+        "width": 1440,
+        "x": 120,
+        "y": 80
+      },
+      "sidebar": {
+        "isVisible": true,
+        "selection": "tabs",
+        "width": 240
+      },
+      "tabManager": {
+        "selectedWorkspaceIndex": 0,
+        "workspaces": [
+          {
+            "currentDirectory": "/home/example/project",
+            "customColor": null,
+            "customTitle": "Linux Workspace",
+            "focusedPanelId": "11111111-1111-1111-1111-111111111111",
+            "gitBranch": {
+              "branch": "main",
+              "isDirty": false
+            },
+            "isPinned": false,
+            "layout": {
+              "pane": {
+                "panelIds": [
+                  "11111111-1111-1111-1111-111111111111"
+                ],
+                "selectedPanelId": "11111111-1111-1111-1111-111111111111"
+              },
+              "type": "pane"
+            },
+            "logEntries": [],
+            "panels": [
+              {
+                "browser": null,
+                "directory": "/home/example/project",
+                "gitBranch": {
+                  "branch": "main",
+                  "isDirty": false
+                },
+                "id": "11111111-1111-1111-1111-111111111111",
+                "isManuallyUnread": false,
+                "isPinned": false,
+                "listeningPorts": [],
+                "markdown": null,
+                "terminal": {
+                  "scrollback": "cargo test\n",
+                  "workingDirectory": "/home/example/project"
+                },
+                "title": "shell",
+                "ttyName": "/dev/pts/7",
+                "type": "terminal"
+              }
+            ],
+            "processTitle": "shell",
+            "progress": null,
+            "statusEntries": []
+          }
+        ]
+      }
+    }
+  ]
+}

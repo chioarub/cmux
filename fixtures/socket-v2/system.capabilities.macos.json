@@ -1,0 +1,43 @@
+{
+  "access_mode": "cmuxOnly",
+  "features": {
+    "browser": true,
+    "debug": true,
+    "notification": true,
+    "pane": true,
+    "session_restore": true,
+    "surface": true,
+    "terminal": true,
+    "window_multi": true,
+    "workspace": true
+  },
+  "methods": [
+    "browser.navigate",
+    "notification.create",
+    "pane.create",
+    "surface.create",
+    "system.capabilities",
+    "system.identify",
+    "system.ping",
+    "window.close",
+    "window.create",
+    "window.current",
+    "window.focus",
+    "window.list",
+    "workspace.close",
+    "workspace.create",
+    "workspace.current",
+    "workspace.list",
+    "workspace.select"
+  ],
+  "platform": {
+    "frontend": "swiftui-appkit",
+    "id": "macos",
+    "window_multi": true
+  },
+  "protocol": "cmux-socket",
+  "socket_path": "/tmp/cmux-debug.sock",
+  "unsupported_method_groups": [],
+  "unsupported_methods": [],
+  "version": 2
+}
