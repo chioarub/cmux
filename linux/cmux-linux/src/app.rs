@@ -432,39 +432,54 @@ fn install_state_action<F>(
 }
 
 fn install_default_accelerators(app: &adw::Application) {
-    app.set_accels_for_action("app.window-new", &["<Primary><Alt>n"]);
-    app.set_accels_for_action("app.window-close", &["<Primary><Alt>w"]);
-    app.set_accels_for_action("app.workspace-new", &["<Primary>n"]);
-    app.set_accels_for_action("app.workspace-close", &["<Primary><Shift>w"]);
-    app.set_accels_for_action("app.workspace-next", &["<Primary><Control>bracketright"]);
-    app.set_accels_for_action("app.workspace-previous", &["<Primary><Control>bracketleft"]);
-    app.set_accels_for_action("app.workspace-last", &["<Primary><Control>grave"]);
-    app.set_accels_for_action("app.split-right", &["<Primary>d"]);
-    app.set_accels_for_action("app.split-down", &["<Primary><Shift>d"]);
-    app.set_accels_for_action("app.surface-new", &["<Primary>t"]);
-    app.set_accels_for_action("app.surface-close", &["<Primary>w"]);
-    app.set_accels_for_action("app.surface-next", &["<Primary><Shift>bracketright"]);
-    app.set_accels_for_action("app.surface-previous", &["<Primary><Shift>bracketleft"]);
+    // Linux-friendly shortcuts: Ctrl+Shift prefix avoids conflicts with
+    // terminal control sequences (Ctrl+C/D/W/Z/L etc.).
+    app.set_accels_for_action("app.workspace-new", &["<Primary><Shift>n"]);
+    app.set_accels_for_action("app.workspace-close", &["<Primary><Shift>q"]);
+    app.set_accels_for_action("app.workspace-next", &["<Primary><Alt>Page_Down"]);
+    app.set_accels_for_action("app.workspace-previous", &["<Primary><Alt>Page_Up"]);
+    app.set_accels_for_action("app.workspace-last", &["<Primary><Shift>grave"]);
+    app.set_accels_for_action("app.split-right", &["<Primary><Shift>d"]);
+    app.set_accels_for_action("app.split-down", &["<Primary><Shift>e"]);
+    app.set_accels_for_action("app.surface-new", &["<Primary><Shift>t"]);
+    app.set_accels_for_action("app.surface-close", &["<Primary><Shift>w"]);
+    app.set_accels_for_action("app.surface-next", &["<Primary>Tab", "<Primary>Page_Down"]);
+    app.set_accels_for_action(
+        "app.surface-previous",
+        &["<Primary><Shift>ISO_Left_Tab", "<Primary>Page_Up"],
+    );
     app.set_accels_for_action("app.pane-last", &["<Primary><Alt>grave"]);
     app.set_accels_for_action("app.pane-focus-left", &["<Primary><Shift>Left"]);
     app.set_accels_for_action("app.pane-focus-right", &["<Primary><Shift>Right"]);
     app.set_accels_for_action("app.pane-focus-up", &["<Primary><Shift>Up"]);
     app.set_accels_for_action("app.pane-focus-down", &["<Primary><Shift>Down"]);
+    app.set_accels_for_action("app.window-new", &["<Primary><Alt>n"]);
+    app.set_accels_for_action("app.window-close", &["<Primary><Alt>w"]);
 }
 
 fn install_css() {
     let css = gtk::CssProvider::new();
     css.load_from_data(concat!(
-        "paned > separator { min-width: 6px; min-height: 6px; background: @borders; }\n",
+        /* Pane split separators */
+        "paned > separator { min-width: 4px; min-height: 4px; background: @borders; }\n",
+        /* Sidebar workspace buttons */
         ".sidebar-workspace { border-radius: 8px; padding: 8px 12px; }\n",
         ".sidebar-workspace:checked { background: alpha(@accent_bg_color, 0.15); }\n",
-        ".workspace-title { font-weight: bold; font-size: 14px; }\n",
+        ".workspace-title { font-weight: bold; font-size: 13px; }\n",
         ".workspace-meta { font-size: 11px; opacity: 0.55; }\n",
-        ".surface-notebook tab { padding: 4px 8px; }\n",
+        /* Notebook tab bar — compact, modern */
+        ".surface-notebook > header.top { min-height: 0; padding: 0; }\n",
+        ".surface-notebook tab { padding: 2px 6px; min-height: 0; }\n",
+        ".surface-notebook tab label { font-size: 12px; padding: 0; margin: 0; }\n",
+        ".surface-notebook tab:checked { background: alpha(@accent_bg_color, 0.08); }\n",
+        /* Tab close button */
+        ".tab-close-btn { min-width: 18px; min-height: 18px; padding: 0; margin: 0; ",
+        "border-radius: 50%; opacity: 0.35; }\n",
+        ".tab-close-btn:hover { opacity: 1.0; background: alpha(@error_color, 0.15); }\n",
+        /* Pane frame: focus indicator */
         ".pane-frame { border: none; }\n",
-        ".pane-frame > label { font-size: 0; min-height: 0; padding: 0; margin: 0; }\n",
-        ".pane-focused { border: 2px solid alpha(@accent_bg_color, 0.6); border-radius: 4px; }\n",
-        ".pane-unfocused { border: 2px solid transparent; border-radius: 4px; }\n",
+        ".pane-focused { border: 2px solid alpha(@accent_bg_color, 0.5); border-radius: 3px; }\n",
+        ".pane-unfocused { border: 2px solid transparent; border-radius: 3px; }\n",
     ));
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -552,9 +567,9 @@ fn create_window_shell(
 
     // Left side: workspace controls
     let ws_new = gtk::Button::from_icon_name("tab-new-symbolic");
-    ws_new.set_tooltip_text(Some("New Workspace (Ctrl+N)"));
+    ws_new.set_tooltip_text(Some("New Workspace (Ctrl+Shift+N)"));
     let ws_close = gtk::Button::from_icon_name("window-close-symbolic");
-    ws_close.set_tooltip_text(Some("Close Workspace (Ctrl+Shift+W)"));
+    ws_close.set_tooltip_text(Some("Close Workspace (Ctrl+Shift+Q)"));
     let ws_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     ws_box.append(&ws_new);
     ws_box.append(&ws_close);
@@ -562,13 +577,13 @@ fn create_window_shell(
 
     // Right side: split / surface controls
     let split_h = gtk::Button::from_icon_name("object-flip-horizontal-symbolic");
-    split_h.set_tooltip_text(Some("Split Right (Ctrl+D)"));
+    split_h.set_tooltip_text(Some("Split Right (Ctrl+Shift+D)"));
     let split_v = gtk::Button::from_icon_name("object-flip-vertical-symbolic");
-    split_v.set_tooltip_text(Some("Split Down (Ctrl+Shift+D)"));
+    split_v.set_tooltip_text(Some("Split Down (Ctrl+Shift+E)"));
     let surf_new = gtk::Button::from_icon_name("list-add-symbolic");
-    surf_new.set_tooltip_text(Some("New Tab (Ctrl+T)"));
+    surf_new.set_tooltip_text(Some("New Tab (Ctrl+Shift+T)"));
     let surf_close = gtk::Button::from_icon_name("list-remove-symbolic");
-    surf_close.set_tooltip_text(Some("Close Tab (Ctrl+W)"));
+    surf_close.set_tooltip_text(Some("Close Tab (Ctrl+Shift+W)"));
 
     let right_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     right_box.append(&split_h);
@@ -637,6 +652,134 @@ fn create_window_shell(
             let _ = model.lock().state.close_window(window_id);
             gtk::glib::Propagation::Proceed
         });
+    }
+
+    // Window-level CAPTURE-phase keyboard handler.
+    // Ensures Ctrl+Shift shortcuts work even when VTE has focus (VTE eats
+    // plain Ctrl+letter combos for terminal control sequences).
+    {
+        let app = app.clone();
+        let model = model.clone();
+        let terminal_runtime = terminal_runtime.clone();
+        let key_controller = gtk::EventControllerKey::new();
+        key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        key_controller.connect_key_pressed(move |_, keyval, _keycode, modifiers| {
+            let ctrl = modifiers & gtk::gdk::ModifierType::CONTROL_MASK
+                == gtk::gdk::ModifierType::CONTROL_MASK;
+            let shift = modifiers & gtk::gdk::ModifierType::SHIFT_MASK
+                == gtk::gdk::ModifierType::SHIFT_MASK;
+            let alt = modifiers & gtk::gdk::ModifierType::ALT_MASK
+                == gtk::gdk::ModifierType::ALT_MASK;
+
+            if !ctrl && !alt {
+                return gtk::glib::Propagation::Proceed;
+            }
+
+            // Alt+1..9: select workspace by index (direct state manipulation)
+            if alt && !ctrl && !shift {
+                let index = match keyval {
+                    gtk::gdk::Key::_1 => Some(0usize),
+                    gtk::gdk::Key::_2 => Some(1),
+                    gtk::gdk::Key::_3 => Some(2),
+                    gtk::gdk::Key::_4 => Some(3),
+                    gtk::gdk::Key::_5 => Some(4),
+                    gtk::gdk::Key::_6 => Some(5),
+                    gtk::gdk::Key::_7 => Some(6),
+                    gtk::gdk::Key::_8 => Some(7),
+                    gtk::gdk::Key::_9 => Some(8),
+                    _ => None,
+                };
+                if let Some(index) = index {
+                    let mut guard = model.lock();
+                    let ws_ids: Vec<Uuid> = guard
+                        .state
+                        .workspaces_in_window(window_id)
+                        .iter()
+                        .map(|ws| ws.id)
+                        .collect();
+                    if let Some(&ws_id) = ws_ids.get(index) {
+                        let _ = guard.state.select_workspace(ws_id);
+                    }
+                    drop(guard);
+                    focus_selected_surface(&model, &terminal_runtime);
+                    return gtk::glib::Propagation::Stop;
+                }
+            }
+
+            // Ctrl+Shift combos — main shortcut layer
+            if ctrl && shift && !alt {
+                // Let copy/paste through to VTE's own handler
+                match keyval {
+                    gtk::gdk::Key::C | gtk::gdk::Key::c => {
+                        return gtk::glib::Propagation::Proceed
+                    }
+                    gtk::gdk::Key::V | gtk::gdk::Key::v => {
+                        return gtk::glib::Propagation::Proceed
+                    }
+                    _ => {}
+                }
+                let action = match keyval {
+                    gtk::gdk::Key::T | gtk::gdk::Key::t => Some("surface-new"),
+                    gtk::gdk::Key::W | gtk::gdk::Key::w => Some("surface-close"),
+                    gtk::gdk::Key::D | gtk::gdk::Key::d => Some("split-right"),
+                    gtk::gdk::Key::E | gtk::gdk::Key::e => Some("split-down"),
+                    gtk::gdk::Key::N | gtk::gdk::Key::n => Some("workspace-new"),
+                    gtk::gdk::Key::Q | gtk::gdk::Key::q => Some("workspace-close"),
+                    gtk::gdk::Key::bracketright | gtk::gdk::Key::braceright => {
+                        Some("surface-next")
+                    }
+                    gtk::gdk::Key::bracketleft | gtk::gdk::Key::braceleft => {
+                        Some("surface-previous")
+                    }
+                    gtk::gdk::Key::ISO_Left_Tab | gtk::gdk::Key::Tab => {
+                        Some("surface-previous")
+                    }
+                    gtk::gdk::Key::Left => Some("pane-focus-left"),
+                    gtk::gdk::Key::Right => Some("pane-focus-right"),
+                    gtk::gdk::Key::Up => Some("pane-focus-up"),
+                    gtk::gdk::Key::Down => Some("pane-focus-down"),
+                    gtk::gdk::Key::grave | gtk::gdk::Key::asciitilde => Some("workspace-last"),
+                    _ => None,
+                };
+                if let Some(action_name) = action {
+                    app.activate_action(action_name, None);
+                    return gtk::glib::Propagation::Stop;
+                }
+            }
+
+            // Ctrl-only (no shift, no alt)
+            if ctrl && !shift && !alt {
+                let action = match keyval {
+                    gtk::gdk::Key::Tab => Some("surface-next"),
+                    gtk::gdk::Key::Page_Down => Some("surface-next"),
+                    gtk::gdk::Key::Page_Up => Some("surface-previous"),
+                    _ => None,
+                };
+                if let Some(action_name) = action {
+                    app.activate_action(action_name, None);
+                    return gtk::glib::Propagation::Stop;
+                }
+            }
+
+            // Ctrl+Alt combos
+            if ctrl && alt && !shift {
+                let action = match keyval {
+                    gtk::gdk::Key::n | gtk::gdk::Key::N => Some("window-new"),
+                    gtk::gdk::Key::w | gtk::gdk::Key::W => Some("window-close"),
+                    gtk::gdk::Key::Page_Down => Some("workspace-next"),
+                    gtk::gdk::Key::Page_Up => Some("workspace-previous"),
+                    gtk::gdk::Key::grave => Some("pane-last"),
+                    _ => None,
+                };
+                if let Some(action_name) = action {
+                    app.activate_action(action_name, None);
+                    return gtk::glib::Propagation::Stop;
+                }
+            }
+
+            gtk::glib::Propagation::Proceed
+        });
+        window.add_controller(key_controller);
     }
 
     connect_window_action_button(&ws_new, app, &model, &terminal_runtime, window_id, "workspace-new");
@@ -983,12 +1126,20 @@ fn update_workspace_in_place(cached: &CachedWorkspaceLayout, workspace: &Workspa
             cached_pane.frame.add_css_class("pane-unfocused");
         }
 
-        // Update tab labels
+        // Update tab labels and tooltips
         for surface in &pane.surfaces {
             if let Some(label) = cached_pane.tab_labels.get(&surface.id) {
-                let new_label = surface_tab_label(surface);
-                if label.label() != new_label {
-                    label.set_label(&new_label);
+                let new_text = surface_tab_label(surface);
+                if label.label() != new_text {
+                    label.set_label(&new_text);
+                }
+                // Update tooltip with full title
+                let full_title = &surface.title;
+                if label
+                    .tooltip_text()
+                    .map_or(true, |t| t.as_str() != full_title)
+                {
+                    label.set_tooltip_text(Some(full_title));
                 }
             }
         }
@@ -1071,12 +1222,38 @@ fn build_pane_view_cached(
     notebook.set_show_tabs(pane.surfaces.len() > 1);
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
+    notebook.add_css_class("surface-notebook");
 
     let mut tab_labels = HashMap::new();
     for surface in &pane.surfaces {
         let page = build_surface_view(terminal_runtime, surface);
+
+        // Tab header: compact label + close button
         let label = gtk::Label::new(Some(&surface_tab_label(surface)));
-        notebook.append_page(&page, Some(&label));
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_max_width_chars(22);
+        label.set_tooltip_text(Some(&surface.title));
+
+        let close_btn = gtk::Button::from_icon_name("window-close-symbolic");
+        close_btn.add_css_class("tab-close-btn");
+        close_btn.add_css_class("flat");
+        close_btn.set_tooltip_text(Some("Close tab"));
+        {
+            let model = model.clone();
+            let surface_id = surface.id;
+            close_btn.connect_clicked(move |_| {
+                let mut guard = model.lock();
+                if let Some((workspace_id, _)) = guard.state.locate_surface(surface_id) {
+                    let _ = guard.state.close_surface(workspace_id, surface_id);
+                }
+            });
+        }
+
+        let tab_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        tab_box.append(&label);
+        tab_box.append(&close_btn);
+
+        notebook.append_page(&page, Some(&tab_box));
         tab_labels.insert(surface.id, label);
     }
 
@@ -1182,7 +1359,8 @@ fn collapse_to_single_window(state: &mut AppState) {
 }
 
 fn surface_tab_label(surface: &Surface) -> String {
-    let mut label = surface.title.clone();
+    let display = smart_display_title(&surface.title);
+    let mut label = display;
     if surface.unread {
         label.push_str(" •");
     }
@@ -1190,6 +1368,65 @@ fn surface_tab_label(surface: &Surface) -> String {
         label.push_str(&format!(" ({})", surface.flash_count));
     }
     label
+}
+
+/// Extract a short, human-friendly display name from VTE terminal titles.
+///
+/// Common VTE title formats:
+///   "user@hostname: /long/path/to/dir" → "dir"
+///   "user@hostname:/long/path"         → "path"
+///   "zsh: ~/projects"                  → "projects"
+///   "/home/user/Desktop"               → "Desktop"
+///   "vim file.txt"                     → "vim file.txt"
+///   "htop"                             → "htop"
+///   "~"                                → "~"
+fn smart_display_title(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "Terminal".to_string();
+    }
+
+    // Extract path portion after "prefix: path" or "prefix:path" patterns
+    let path_candidate = extract_path_from_title(trimmed);
+
+    // If it looks like a filesystem path, return just the last component
+    if path_candidate.starts_with('/') || path_candidate.starts_with('~') {
+        if path_candidate == "~" || path_candidate == "/" {
+            return path_candidate.to_string();
+        }
+        if let Some(name) = std::path::Path::new(&path_candidate).file_name() {
+            let n = name.to_string_lossy();
+            if !n.is_empty() {
+                return n.into_owned();
+            }
+        }
+    }
+
+    path_candidate
+}
+
+/// Strip common terminal title prefixes (user@host:, shell:) to find the
+/// path or command name.
+fn extract_path_from_title(title: &str) -> String {
+    // "user@host: /path" → "/path"
+    if let Some(idx) = title.find(": ") {
+        let after = title[idx + 2..].trim();
+        if !after.is_empty() && (after.starts_with('/') || after.starts_with('~')) {
+            return after.to_string();
+        }
+    }
+    // "user@host:/path" → "/path"
+    if let Some(idx) = title.find(':') {
+        let before = &title[..idx];
+        let after = title[idx + 1..].trim();
+        if (before.contains('@') || before.len() <= 6)
+            && !after.is_empty()
+            && (after.starts_with('/') || after.starts_with('~'))
+        {
+            return after.to_string();
+        }
+    }
+    title.to_string()
 }
 
 fn short_id(id: Uuid) -> String {
