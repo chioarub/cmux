@@ -18,17 +18,43 @@ use uuid::Uuid;
 
 const APP_ID: &str = "dev.cmux.linux";
 
+/// Cached widget references for a single pane, enabling in-place updates
+/// without tearing down and rebuilding the widget tree.
+struct CachedPaneWidgets {
+    frame: gtk::Frame,
+    notebook: gtk::Notebook,
+    tab_labels: HashMap<Uuid, gtk::Label>,
+}
+
+/// Cached widget tree for a workspace's full layout.
+struct CachedWorkspaceLayout {
+    root_widget: gtk::Widget,
+    fingerprint: String,
+    pane_widgets: HashMap<Uuid, CachedPaneWidgets>,
+}
+
+/// Cached sidebar button references for a single workspace row.
+struct CachedSidebarRow {
+    button: gtk::ToggleButton,
+    title_label: gtk::Label,
+    meta_label: gtk::Label,
+}
+
 struct WindowShell {
     window: adw::ApplicationWindow,
     sidebar_box: gtk::Box,
     content_box: gtk::Box,
+    // Incremental rendering state
+    current_workspace_id: Option<Uuid>,
+    workspace_layouts: HashMap<Uuid, CachedWorkspaceLayout>,
+    sidebar_rows: Vec<(Uuid, CachedSidebarRow)>,
 }
 
 pub fn run() -> gtk::glib::ExitCode {
     let socket_path = configured_socket_path();
     let session_path = configured_session_path();
     let (terminal_bridge, terminal_receiver) = TerminalBridge::new();
-    let restored_state = match load_state(&session_path) {
+    let mut restored_state = match load_state(&session_path) {
         Ok(Some(state)) => state,
         Ok(None) => AppState::new(),
         Err(error) => {
@@ -39,6 +65,10 @@ pub fn run() -> gtk::glib::ExitCode {
             AppState::new()
         }
     };
+    // Collapse multiple windows into a single window on startup.
+    // Multi-window state can persist from previous sessions and causes a
+    // confusing double-window on launch.
+    collapse_to_single_window(&mut restored_state);
     let model = AppModel::shared_with_state(socket_path.clone(), terminal_bridge, restored_state);
     let terminal_runtime = Rc::new(RefCell::new(TerminalRuntime::new(
         model.clone(),
@@ -335,7 +365,7 @@ fn build_ui(
         let terminal_runtime = terminal_runtime.clone();
         let last_revision = last_revision.clone();
         let session_dirty = session_dirty.clone();
-        gtk::glib::timeout_add_local(Duration::from_millis(60), move || {
+        gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
             terminal_runtime.borrow_mut().pump_commands();
             let revision = current_revision(&model);
             let mut observed_revision = last_revision.borrow_mut();
@@ -494,15 +524,15 @@ fn reconcile_window_shells(
                 .window
                 .set_title(Some(&format!("{workspace_title} — cmux")));
         }
-        render_sidebar(
-            &shell.sidebar_box,
+        reconcile_sidebar(
+            shell,
             model,
             terminal_runtime,
             snapshot,
             window_state.id,
         );
-        render_workspace_content(
-            &shell.content_box,
+        reconcile_workspace_content(
+            shell,
             model,
             terminal_runtime,
             snapshot,
@@ -621,6 +651,9 @@ fn create_window_shell(
         window,
         sidebar_box,
         content_box,
+        current_workspace_id: None,
+        workspace_layouts: HashMap::new(),
+        sidebar_rows: Vec::new(),
     }
 }
 
@@ -659,29 +692,24 @@ fn clear_box(container: &gtk::Box) {
     }
 }
 
-fn render_sidebar(
-    sidebar_box: &gtk::Box,
-    model: &SharedModel,
-    terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
-    snapshot: &AppState,
-    window_id: Uuid,
-) {
-    clear_box(sidebar_box);
+// ---------------------------------------------------------------------------
+// Sidebar — incremental reconciliation
+// ---------------------------------------------------------------------------
+
+type WorkspaceRowData = (
+    Uuid,      // workspace_id
+    String,    // title
+    String,    // meta text
+    bool,      // selected
+);
+
+fn collect_sidebar_rows(snapshot: &AppState, window_id: Uuid) -> Vec<WorkspaceRowData> {
     let selected_workspace_id = snapshot
         .window(window_id)
         .map(|window| window.selected_workspace_id)
         .unwrap_or(Uuid::nil());
 
-    type WorkspaceRow = (
-        WorkspaceId,
-        String,
-        Option<String>,
-        usize,
-        usize,
-        usize,
-        bool,
-    );
-    let rows: Vec<WorkspaceRow> = snapshot
+    snapshot
         .workspaces
         .iter()
         .filter(|workspace| workspace.window_id == window_id)
@@ -692,115 +720,308 @@ fn render_sidebar(
                 .flat_map(|pane| &pane.surfaces)
                 .filter(|surface| surface.unread)
                 .count();
+            let surface_count = workspace.surface_count();
+            let mut meta_parts = Vec::new();
+            if surface_count > 1 {
+                meta_parts.push(format!("{surface_count} tabs"));
+            }
+            if unread_count > 0 {
+                meta_parts.push(format!("{unread_count} unread"));
+            }
+            if let Some(ref cwd) = workspace.current_directory {
+                if let Some(dir_name) = std::path::Path::new(cwd).file_name() {
+                    meta_parts.push(dir_name.to_string_lossy().into_owned());
+                }
+            }
+            let meta_text = meta_parts.join(" · ");
             (
                 workspace.id,
                 workspace.title.clone(),
-                workspace.current_directory.clone(),
-                workspace.pane_count(),
-                workspace.surface_count(),
-                unread_count,
+                meta_text,
                 workspace.id == selected_workspace_id,
             )
         })
-        .collect();
-
-    for (
-        workspace_id,
-        title,
-        current_directory,
-        _pane_count,
-        surface_count,
-        unread_count,
-        selected,
-    ) in rows
-    {
-        let title_label = gtk::Label::new(Some(&title));
-        title_label.set_xalign(0.0);
-        title_label.add_css_class("workspace-title");
-
-        let mut meta_parts = Vec::new();
-        if surface_count > 1 {
-            meta_parts.push(format!("{surface_count} tabs"));
-        }
-        if unread_count > 0 {
-            meta_parts.push(format!("{unread_count} unread"));
-        }
-        if let Some(ref cwd) = current_directory {
-            if let Some(dir_name) = std::path::Path::new(cwd).file_name() {
-                meta_parts.push(dir_name.to_string_lossy().into_owned());
-            }
-        }
-        let meta_text = if meta_parts.is_empty() {
-            String::new()
-        } else {
-            meta_parts.join(" · ")
-        };
-
-        let row_content = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        row_content.append(&title_label);
-        if !meta_text.is_empty() {
-            let meta_label = gtk::Label::new(Some(&meta_text));
-            meta_label.set_xalign(0.0);
-            meta_label.add_css_class("workspace-meta");
-            meta_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            row_content.append(&meta_label);
-        }
-
-        let button = gtk::ToggleButton::new();
-        button.set_active(selected);
-        button.set_child(Some(&row_content));
-        button.set_halign(gtk::Align::Fill);
-        button.set_hexpand(true);
-        button.add_css_class("sidebar-workspace");
-        button.add_css_class("flat");
-
-        let model = model.clone();
-        let terminal_runtime = terminal_runtime.clone();
-        button.connect_clicked(move |_| {
-            let _ = model.lock().state.select_workspace(workspace_id);
-            focus_selected_surface(&model, &terminal_runtime);
-        });
-
-        sidebar_box.append(&button);
-    }
+        .collect()
 }
 
-fn render_workspace_content(
-    content_box: &gtk::Box,
+fn reconcile_sidebar(
+    shell: &mut WindowShell,
     model: &SharedModel,
     terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
     snapshot: &AppState,
     window_id: Uuid,
 ) {
-    clear_box(content_box);
+    let rows = collect_sidebar_rows(snapshot, window_id);
+    let row_ids: Vec<Uuid> = rows.iter().map(|(id, _, _, _)| *id).collect();
 
+    // If the workspace list (order + IDs) changed, do a full rebuild.
+    let existing_ids: Vec<Uuid> = shell.sidebar_rows.iter().map(|(id, _)| *id).collect();
+    if existing_ids != row_ids {
+        // Full rebuild needed
+        clear_box(&shell.sidebar_box);
+        shell.sidebar_rows.clear();
+        for (workspace_id, title, meta_text, selected) in &rows {
+            let row = create_sidebar_row(model, terminal_runtime, *workspace_id);
+            row.title_label.set_label(title);
+            row.meta_label.set_label(meta_text);
+            row.meta_label.set_visible(!meta_text.is_empty());
+            row.button.set_active(*selected);
+            shell.sidebar_box.append(&row.button);
+            shell.sidebar_rows.push((*workspace_id, row));
+        }
+        return;
+    }
+
+    // In-place update: same workspace list, just update labels + selection
+    for ((_, cached_row), (_, title, meta_text, selected)) in
+        shell.sidebar_rows.iter().zip(rows.iter())
+    {
+        cached_row.title_label.set_label(title);
+        cached_row.meta_label.set_label(meta_text);
+        cached_row.meta_label.set_visible(!meta_text.is_empty());
+        // Avoid signal recursion: only toggle if state actually differs
+        if cached_row.button.is_active() != *selected {
+            cached_row.button.set_active(*selected);
+        }
+    }
+}
+
+fn create_sidebar_row(
+    model: &SharedModel,
+    terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
+    workspace_id: Uuid,
+) -> CachedSidebarRow {
+    let title_label = gtk::Label::new(None);
+    title_label.set_xalign(0.0);
+    title_label.add_css_class("workspace-title");
+
+    let meta_label = gtk::Label::new(None);
+    meta_label.set_xalign(0.0);
+    meta_label.add_css_class("workspace-meta");
+    meta_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+    let row_content = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    row_content.append(&title_label);
+    row_content.append(&meta_label);
+
+    let button = gtk::ToggleButton::new();
+    button.set_child(Some(&row_content));
+    button.set_halign(gtk::Align::Fill);
+    button.set_hexpand(true);
+    button.add_css_class("sidebar-workspace");
+    button.add_css_class("flat");
+
+    let model = model.clone();
+    let terminal_runtime = terminal_runtime.clone();
+    button.connect_clicked(move |_| {
+        let _ = model.lock().state.select_workspace(workspace_id);
+        focus_selected_surface(&model, &terminal_runtime);
+    });
+
+    CachedSidebarRow {
+        button,
+        title_label,
+        meta_label,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Content area — incremental reconciliation
+// ---------------------------------------------------------------------------
+
+/// Compute a structural fingerprint for a workspace layout.
+/// This encodes the tree structure (pane IDs, surface IDs, orientations) but
+/// NOT dynamic state like focus, titles, or unread counts.
+fn layout_fingerprint(workspace: &Workspace) -> String {
+    let mut parts = Vec::new();
+    layout_fingerprint_recursive(&workspace.layout, &workspace.panes, &mut parts);
+    parts.join("|")
+}
+
+fn layout_fingerprint_recursive(
+    layout: &WorkspaceLayout,
+    panes: &[Pane],
+    parts: &mut Vec<String>,
+) {
+    match layout {
+        WorkspaceLayout::Pane(pane_id) => {
+            let surface_ids: Vec<String> = panes
+                .iter()
+                .find(|p| p.id == *pane_id)
+                .map(|pane| {
+                    pane.surfaces
+                        .iter()
+                        .map(|s| short_id(s.id))
+                        .collect()
+                })
+                .unwrap_or_default();
+            parts.push(format!("P{}[{}]", short_id(*pane_id), surface_ids.join(",")));
+        }
+        WorkspaceLayout::Split {
+            orientation,
+            first,
+            second,
+        } => {
+            let orient = match orientation {
+                SplitOrientation::Horizontal => "H",
+                SplitOrientation::Vertical => "V",
+            };
+            parts.push(format!("S{orient}("));
+            layout_fingerprint_recursive(first, panes, parts);
+            parts.push(",".to_string());
+            layout_fingerprint_recursive(second, panes, parts);
+            parts.push(")".to_string());
+        }
+    }
+}
+
+fn reconcile_workspace_content(
+    shell: &mut WindowShell,
+    model: &SharedModel,
+    terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
+    snapshot: &AppState,
+    window_id: Uuid,
+) {
     let workspace = snapshot
         .window(window_id)
         .and_then(|window| snapshot.workspace(window.selected_workspace_id))
         .cloned();
     let Some(workspace) = workspace else {
+        clear_box(&shell.content_box);
+        shell.current_workspace_id = None;
         return;
     };
 
-    let layout_widget =
-        build_workspace_layout(model, terminal_runtime, &workspace, &workspace.layout);
+    let workspace_id = workspace.id;
+    let fingerprint = layout_fingerprint(&workspace);
+    let same_workspace = shell.current_workspace_id == Some(workspace_id);
+
+    // Check if we have a cached layout with matching fingerprint
+    if same_workspace {
+        if let Some(cached) = shell.workspace_layouts.get(&workspace_id) {
+            if cached.fingerprint == fingerprint {
+                // Structure unchanged — do in-place updates only
+                update_workspace_in_place(cached, &workspace);
+                return;
+            }
+        }
+    }
+
+    // Structure changed or workspace switched — need to build/rebuild.
+
+    // If switching workspaces, remove the old root widget from content_box
+    // but keep the cached layout alive for quick switching back.
+    if !same_workspace {
+        clear_box(&shell.content_box);
+    } else {
+        // Same workspace but structure changed — remove old root
+        clear_box(&shell.content_box);
+        shell.workspace_layouts.remove(&workspace_id);
+    }
+
+    // Check if we already have a cached layout for this workspace (switching back)
+    if let Some(cached) = shell.workspace_layouts.get(&workspace_id) {
+        if cached.fingerprint == fingerprint {
+            shell.content_box.append(&cached.root_widget);
+            update_workspace_in_place(cached, &workspace);
+            shell.current_workspace_id = Some(workspace_id);
+            return;
+        } else {
+            // Stale cache — remove it
+            shell.workspace_layouts.remove(&workspace_id);
+        }
+    }
+
+    // Build fresh layout
+    let mut pane_widgets = HashMap::new();
+    let layout_widget = build_workspace_layout_cached(
+        model,
+        terminal_runtime,
+        &workspace,
+        &workspace.layout,
+        &mut pane_widgets,
+    );
     layout_widget.set_hexpand(true);
     layout_widget.set_vexpand(true);
-    content_box.append(&layout_widget);
+    shell.content_box.append(&layout_widget);
+
+    // Apply initial dynamic state
+    let cached = CachedWorkspaceLayout {
+        root_widget: layout_widget,
+        fingerprint,
+        pane_widgets,
+    };
+    update_workspace_in_place(&cached, &workspace);
+    shell.workspace_layouts.insert(workspace_id, cached);
+    shell.current_workspace_id = Some(workspace_id);
+
+    // Prune layouts for workspaces that no longer exist
+    let live_workspace_ids: HashSet<Uuid> = snapshot
+        .workspaces
+        .iter()
+        .map(|ws| ws.id)
+        .collect();
+    shell
+        .workspace_layouts
+        .retain(|id, _| live_workspace_ids.contains(id));
 }
 
-fn build_workspace_layout(
+/// Update dynamic state (focus, tab selection, tab labels) without rebuilding widgets.
+fn update_workspace_in_place(cached: &CachedWorkspaceLayout, workspace: &Workspace) {
+    for pane in &workspace.panes {
+        let Some(cached_pane) = cached.pane_widgets.get(&pane.id) else {
+            continue;
+        };
+
+        let is_selected = pane.id == workspace.selected_pane_id;
+        // Update pane focus CSS
+        if is_selected {
+            cached_pane.frame.remove_css_class("pane-unfocused");
+            cached_pane.frame.add_css_class("pane-focused");
+        } else {
+            cached_pane.frame.remove_css_class("pane-focused");
+            cached_pane.frame.add_css_class("pane-unfocused");
+        }
+
+        // Update tab labels
+        for surface in &pane.surfaces {
+            if let Some(label) = cached_pane.tab_labels.get(&surface.id) {
+                let new_label = surface_tab_label(surface);
+                if label.label() != new_label {
+                    label.set_label(&new_label);
+                }
+            }
+        }
+
+        // Update selected tab (without rebuilding the notebook)
+        if let Some(index) = pane
+            .surfaces
+            .iter()
+            .position(|surface| surface.id == pane.selected_surface_id)
+        {
+            let target = index as u32;
+            if cached_pane.notebook.current_page() != Some(target) {
+                cached_pane.notebook.set_current_page(Some(target));
+            }
+        }
+
+        // Update tab bar visibility
+        cached_pane.notebook.set_show_tabs(pane.surfaces.len() > 1);
+    }
+}
+
+fn build_workspace_layout_cached(
     model: &SharedModel,
     terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
     workspace: &Workspace,
     layout: &WorkspaceLayout,
+    pane_widgets: &mut HashMap<Uuid, CachedPaneWidgets>,
 ) -> gtk::Widget {
     match layout {
         WorkspaceLayout::Pane(pane_id) => workspace
             .pane(*pane_id)
             .map(|pane| {
-                let is_selected = *pane_id == workspace.selected_pane_id;
-                build_pane_view(model, terminal_runtime, workspace.id, pane, is_selected)
+                build_pane_view_cached(model, terminal_runtime, workspace.id, pane, pane_widgets)
             })
             .unwrap_or_else(|| missing_pane_widget(*pane_id)),
         WorkspaceLayout::Split {
@@ -819,29 +1040,31 @@ fn build_workspace_layout(
                 .resize_start_child(true)
                 .resize_end_child(true)
                 .build();
-            paned.set_start_child(Some(&build_workspace_layout(
+            paned.set_start_child(Some(&build_workspace_layout_cached(
                 model,
                 terminal_runtime,
                 workspace,
                 first,
+                pane_widgets,
             )));
-            paned.set_end_child(Some(&build_workspace_layout(
+            paned.set_end_child(Some(&build_workspace_layout_cached(
                 model,
                 terminal_runtime,
                 workspace,
                 second,
+                pane_widgets,
             )));
             paned.upcast::<gtk::Widget>()
         }
     }
 }
 
-fn build_pane_view(
+fn build_pane_view_cached(
     model: &SharedModel,
     terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
     _workspace_id: WorkspaceId,
     pane: &Pane,
-    is_selected: bool,
+    pane_widgets: &mut HashMap<Uuid, CachedPaneWidgets>,
 ) -> gtk::Widget {
     let notebook = gtk::Notebook::new();
     notebook.set_scrollable(true);
@@ -849,10 +1072,12 @@ fn build_pane_view(
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
 
+    let mut tab_labels = HashMap::new();
     for surface in &pane.surfaces {
         let page = build_surface_view(terminal_runtime, surface);
         let label = gtk::Label::new(Some(&surface_tab_label(surface)));
         notebook.append_page(&page, Some(&label));
+        tab_labels.insert(surface.id, label);
     }
 
     let surface_ids = pane
@@ -881,14 +1106,20 @@ fn build_pane_view(
 
     let frame = gtk::Frame::new(None::<&str>);
     frame.add_css_class("pane-frame");
-    if is_selected {
-        frame.add_css_class("pane-focused");
-    } else {
-        frame.add_css_class("pane-unfocused");
-    }
+    frame.add_css_class("pane-unfocused");
     frame.set_hexpand(true);
     frame.set_vexpand(true);
     frame.set_child(Some(&notebook));
+
+    pane_widgets.insert(
+        pane.id,
+        CachedPaneWidgets {
+            frame: frame.clone(),
+            notebook,
+            tab_labels,
+        },
+    );
+
     frame.upcast::<gtk::Widget>()
 }
 
@@ -896,12 +1127,9 @@ fn build_surface_view(
     terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
     surface: &Surface,
 ) -> gtk::Widget {
-    let (_backend_name, host_widget) = {
+    let host_widget = {
         let mut runtime = terminal_runtime.borrow_mut();
-        (
-            runtime.backend_name().to_string(),
-            runtime.widget_for_surface(surface.id),
-        )
+        runtime.widget_for_surface(surface.id)
     };
     if host_widget.parent().is_some() {
         host_widget.unparent();
@@ -921,6 +1149,38 @@ fn missing_pane_widget(pane_id: PaneId) -> gtk::Widget {
     label.upcast::<gtk::Widget>()
 }
 
+// ---------------------------------------------------------------------------
+// Window collapse — merge multiple windows into one
+// ---------------------------------------------------------------------------
+
+fn collapse_to_single_window(state: &mut AppState) {
+    if state.windows.len() <= 1 {
+        return;
+    }
+    // Keep the first window; move all workspaces into it.
+    let primary_window_id = state.windows[0].id;
+    for workspace in &mut state.workspaces {
+        workspace.window_id = primary_window_id;
+    }
+    state.windows.truncate(1);
+    state.window_id = primary_window_id;
+    // Ensure the window selection is valid
+    if !state
+        .workspaces
+        .iter()
+        .any(|ws| ws.id == state.selected_workspace_id)
+    {
+        state.selected_workspace_id = state
+            .workspaces
+            .first()
+            .map(|ws| ws.id)
+            .unwrap_or(Uuid::nil());
+    }
+    if let Some(window) = state.windows.first_mut() {
+        window.selected_workspace_id = state.selected_workspace_id;
+    }
+}
+
 fn surface_tab_label(surface: &Surface) -> String {
     let mut label = surface.title.clone();
     if surface.unread {
@@ -936,3 +1196,5 @@ fn short_id(id: Uuid) -> String {
     let raw = id.as_simple().to_string();
     raw[..8].to_string()
 }
+
+

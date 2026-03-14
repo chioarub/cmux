@@ -67,10 +67,6 @@ impl TerminalRuntime {
         }
     }
 
-    pub fn backend_name(&self) -> &'static str {
-        self.backend_status.active
-    }
-
     pub fn backend_status(&self) -> &TerminalBackendStatus {
         &self.backend_status
     }
