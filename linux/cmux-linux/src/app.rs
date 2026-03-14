@@ -64,7 +64,15 @@ pub fn run() -> gtk::glib::ExitCode {
         let terminal_runtime = terminal_runtime.clone();
         let server_status = server_status.clone();
         let session_path = session_path.clone();
+        let activated = Rc::new(Cell::new(false));
         app.connect_activate(move |app| {
+            if activated.get() {
+                if let Some(window) = app.active_window() {
+                    window.present();
+                }
+                return;
+            }
+            activated.set(true);
             build_ui(
                 app,
                 model.clone(),
@@ -425,6 +433,8 @@ fn install_css() {
         ".surface-notebook tab { padding: 4px 8px; }\n",
         ".pane-frame { border: none; }\n",
         ".pane-frame > label { font-size: 0; min-height: 0; padding: 0; margin: 0; }\n",
+        ".pane-focused { border: 2px solid alpha(@accent_bg_color, 0.6); border-radius: 4px; }\n",
+        ".pane-unfocused { border: 2px solid transparent; border-radius: 4px; }\n",
     ));
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -588,6 +598,14 @@ fn create_window_shell(
             }
             let _ = model.lock().state.focus_window(window_id);
             focus_selected_surface(&model, &terminal_runtime);
+        });
+    }
+
+    {
+        let model = model.clone();
+        window.connect_close_request(move |_| {
+            let _ = model.lock().state.close_window(window_id);
+            gtk::glib::Propagation::Proceed
         });
     }
 
@@ -780,7 +798,10 @@ fn build_workspace_layout(
     match layout {
         WorkspaceLayout::Pane(pane_id) => workspace
             .pane(*pane_id)
-            .map(|pane| build_pane_view(model, terminal_runtime, workspace.id, pane))
+            .map(|pane| {
+                let is_selected = *pane_id == workspace.selected_pane_id;
+                build_pane_view(model, terminal_runtime, workspace.id, pane, is_selected)
+            })
             .unwrap_or_else(|| missing_pane_widget(*pane_id)),
         WorkspaceLayout::Split {
             orientation,
@@ -820,9 +841,11 @@ fn build_pane_view(
     terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
     _workspace_id: WorkspaceId,
     pane: &Pane,
+    is_selected: bool,
 ) -> gtk::Widget {
     let notebook = gtk::Notebook::new();
     notebook.set_scrollable(true);
+    notebook.set_show_tabs(pane.surfaces.len() > 1);
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
 
@@ -858,6 +881,11 @@ fn build_pane_view(
 
     let frame = gtk::Frame::new(None::<&str>);
     frame.add_css_class("pane-frame");
+    if is_selected {
+        frame.add_css_class("pane-focused");
+    } else {
+        frame.add_css_class("pane-unfocused");
+    }
     frame.set_hexpand(true);
     frame.set_vexpand(true);
     frame.set_child(Some(&notebook));

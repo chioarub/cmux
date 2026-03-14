@@ -246,6 +246,19 @@ fn vte_session(model: &SharedModel, surface_id: SurfaceId) -> VteSession {
 
     {
         let model = model.clone();
+        terminal.connect_window_title_changed(move |terminal| {
+            if let Some(title) = terminal.window_title() {
+                let title_str = title.to_string();
+                if !title_str.is_empty() {
+                    let mut guard = model.lock();
+                    let _ = guard.state.rename_surface(surface_id, title_str);
+                }
+            }
+        });
+    }
+
+    {
+        let model = model.clone();
         let child_pid = child_pid.clone();
         gtk::glib::timeout_add_local(Duration::from_millis(250), move || {
             if !surface_exists(&model, surface_id) {
@@ -267,6 +280,17 @@ fn vte_session(model: &SharedModel, surface_id: SurfaceId) -> VteSession {
             let _ = model.lock().state.focus_surface(surface_id);
         });
         terminal.add_controller(focus_controller);
+    }
+
+    {
+        let model = model.clone();
+        terminal.connect_bell(move |_terminal| {
+            let mut guard = model.lock();
+            let is_focused = guard.state.current_surface_id() == Some(surface_id);
+            if !is_focused {
+                let _ = guard.state.mark_surface_unread(surface_id);
+            }
+        });
     }
 
     {
@@ -292,11 +316,54 @@ fn vte_session(model: &SharedModel, surface_id: SurfaceId) -> VteSession {
         terminal.add_controller(key_controller);
     }
 
+    // Right-click context menu for copy/paste
+    {
+        let terminal_ref = terminal.clone();
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(3); // right-click
+        gesture.connect_pressed(move |gesture, _n_press, x, y| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            let term = terminal_ref.clone();
+            let menu = gtk::gio::Menu::new();
+            menu.append(Some("Copy"), Some("terminal.copy"));
+            menu.append(Some("Paste"), Some("terminal.paste"));
+
+            let copy_action = gtk::gio::SimpleAction::new("copy", None);
+            {
+                let t = term.clone();
+                copy_action.connect_activate(move |_, _| {
+                    t.copy_clipboard_format(vte4::Format::Text);
+                });
+            }
+            let paste_action = gtk::gio::SimpleAction::new("paste", None);
+            {
+                let t = term.clone();
+                paste_action.connect_activate(move |_, _| {
+                    t.paste_clipboard();
+                });
+            }
+            let action_group = gtk::gio::SimpleActionGroup::new();
+            action_group.add_action(&copy_action);
+            action_group.add_action(&paste_action);
+            term.insert_action_group("terminal", Some(&action_group));
+
+            let popover = gtk::PopoverMenu::from_model(Some(&menu));
+            popover.set_parent(&term);
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                x as i32, y as i32, 1, 1,
+            )));
+            popover.connect_closed(|p| p.unparent());
+            popover.popup();
+        });
+        terminal.add_controller(gesture);
+    }
+
     {
         let model = model.clone();
         let child_pid = child_pid.clone();
-        terminal.connect_child_exited(move |_, status| {
-            let _ = model.lock().state.update_surface_terminal_health(
+        terminal.connect_child_exited(move |terminal, status| {
+            let mut guard = model.lock();
+            let _ = guard.state.update_surface_terminal_health(
                 surface_id,
                 TerminalHealth {
                     realized: true,
@@ -307,6 +374,14 @@ fn vte_session(model: &SharedModel, surface_id: SurfaceId) -> VteSession {
                     ..TerminalHealth::default()
                 },
             );
+            // Try to close the surface; if it's the last one, feed a restart hint
+            if let Some((workspace_id, _pane_id)) = guard.state.locate_surface(surface_id) {
+                if guard.state.close_surface(workspace_id, surface_id).is_err() {
+                    // Last surface — can't close, show restart message
+                    drop(guard);
+                    terminal.feed(b"\r\n\x1b[1m[Process exited. Press Enter to restart]\x1b[0m\r\n");
+                }
+            }
         });
     }
 

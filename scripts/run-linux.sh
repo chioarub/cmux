@@ -8,6 +8,7 @@ cd "$PROJECT_DIR"
 
 DOCTOR_ONLY=0
 RELEASE=0
+RESET=0
 
 usage() {
     cat <<'EOF'
@@ -18,6 +19,7 @@ Build and launch the cmux Linux app.
 Options:
   --release    Build and run with optimizations
   --doctor     Print the Linux/Wayland readiness report and exit
+  --reset      Clear saved session state before launching
   -h, --help   Show this help
 
 Socket:
@@ -30,6 +32,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --release) RELEASE=1; shift ;;
         --doctor)  DOCTOR_ONLY=1; shift ;;
+        --reset)   RESET=1; shift ;;
         --)        shift; break ;;
         -h|--help) usage; exit 0 ;;
         *)         break ;;
@@ -50,6 +53,12 @@ fi
 CARGO_ARGS=(--manifest-path linux/Cargo.toml -p cmux-linux)
 if [[ "$RELEASE" == "1" ]]; then
     CARGO_ARGS+=(--release)
+fi
+
+if [[ "$RESET" == "1" ]]; then
+    SESSION_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cmux"
+    rm -f "$SESSION_DIR/cmux-linux-session.json"
+    echo "Session state cleared."
 fi
 
 exec cargo run "${CARGO_ARGS[@]}" -- "$@"
