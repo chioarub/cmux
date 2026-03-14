@@ -7,59 +7,49 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
 DOCTOR_ONLY=0
+RELEASE=0
 
 usage() {
     cat <<'EOF'
-Usage: ./scripts/run-linux.sh [--doctor] [-- <binary-args>]
+Usage: ./scripts/run-linux.sh [OPTIONS] [-- <binary-args>]
+
+Build and launch the cmux Linux app.
 
 Options:
-  --doctor            Print the Linux/Wayland readiness report and exit
-  -h, --help          Show this help
+  --release    Build and run with optimizations
+  --doctor     Print the Linux/Wayland readiness report and exit
+  -h, --help   Show this help
 
 Socket:
-  Defaults to /tmp/cmux-linux.sock
+  Defaults to $XDG_RUNTIME_DIR/cmux.sock
   Override with CMUX_SOCKET or CMUX_SOCKET_PATH
 EOF
 }
 
-if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
-    usage
-    exit 0
-fi
-
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --backend)
-            echo "error: Linux now supports only the built-in VTE backend; --backend has been removed"
-            exit 2
-            ;;
-        --doctor)
-            DOCTOR_ONLY=1
-            shift
-            ;;
-        --)
-            shift
-            break
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            break
-            ;;
+        --release) RELEASE=1; shift ;;
+        --doctor)  DOCTOR_ONLY=1; shift ;;
+        --)        shift; break ;;
+        -h|--help) usage; exit 0 ;;
+        *)         break ;;
     esac
 done
 
-python3 "$SCRIPT_DIR/linux_wayland_doctor.py" >/tmp/cmux-linux-doctor.txt || {
-    cat /tmp/cmux-linux-doctor.txt
-    exit 1
-}
-cat /tmp/cmux-linux-doctor.txt
-
-if [[ "$DOCTOR_ONLY" == "1" ]]; then
-    exit 0
+if [[ -f "$SCRIPT_DIR/linux_wayland_doctor.py" ]]; then
+    python3 "$SCRIPT_DIR/linux_wayland_doctor.py" >/tmp/cmux-linux-doctor.txt 2>&1 || {
+        cat /tmp/cmux-linux-doctor.txt
+        exit 1
+    }
+    if [[ "$DOCTOR_ONLY" == "1" ]]; then
+        cat /tmp/cmux-linux-doctor.txt
+        exit 0
+    fi
 fi
 
-export GDK_BACKEND=wayland
-exec cargo run --manifest-path linux/Cargo.toml -p cmux-linux "$@"
+CARGO_ARGS=(--manifest-path linux/Cargo.toml -p cmux-linux)
+if [[ "$RELEASE" == "1" ]]; then
+    CARGO_ARGS+=(--release)
+fi
+
+exec cargo run "${CARGO_ARGS[@]}" -- "$@"

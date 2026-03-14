@@ -96,6 +96,7 @@ pub struct Pane {
 }
 
 impl Pane {
+    #[allow(dead_code)]
     pub fn selected_surface(&self) -> Option<&Surface> {
         self.surface(self.selected_surface_id)
     }

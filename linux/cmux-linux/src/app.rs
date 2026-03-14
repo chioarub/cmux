@@ -416,9 +416,16 @@ fn install_default_accelerators(app: &adw::Application) {
 
 fn install_css() {
     let css = gtk::CssProvider::new();
-    css.load_from_data(
-        "paned > separator { min-width: 6px; min-height: 6px; background: @borders; }",
-    );
+    css.load_from_data(concat!(
+        "paned > separator { min-width: 6px; min-height: 6px; background: @borders; }\n",
+        ".sidebar-workspace { border-radius: 8px; padding: 8px 12px; }\n",
+        ".sidebar-workspace:checked { background: alpha(@accent_bg_color, 0.15); }\n",
+        ".workspace-title { font-weight: bold; font-size: 14px; }\n",
+        ".workspace-meta { font-size: 11px; opacity: 0.55; }\n",
+        ".surface-notebook tab { padding: 4px 8px; }\n",
+        ".pane-frame { border: none; }\n",
+        ".pane-frame > label { font-size: 0; min-height: 0; padding: 0; margin: 0; }\n",
+    ));
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -464,9 +471,19 @@ fn reconcile_window_shells(
                 banner_text.to_string(),
             )
         });
-        shell
-            .window
-            .set_title(Some(&format!("cmux Linux {}", index + 1)));
+        let workspace_title = snapshot
+            .workspace(window_state.selected_workspace_id)
+            .map(|ws| ws.title.as_str())
+            .unwrap_or("cmux");
+        if snapshot.windows.len() > 1 {
+            shell
+                .window
+                .set_title(Some(&format!("{workspace_title} — cmux ({})", index + 1)));
+        } else {
+            shell
+                .window
+                .set_title(Some(&format!("{workspace_title} — cmux")));
+        }
         render_sidebar(
             &shell.sidebar_box,
             model,
@@ -489,45 +506,46 @@ fn create_window_shell(
     model: SharedModel,
     terminal_runtime: Rc<RefCell<TerminalRuntime>>,
     window_id: Uuid,
-    banner_text: String,
+    _banner_text: String,
 ) -> WindowShell {
-    let title = gtk::Label::new(Some("cmux Linux"));
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&title));
 
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    controls.set_margin_top(8);
-    controls.set_margin_bottom(8);
-    controls.set_margin_start(12);
-    controls.set_margin_end(12);
+    // Left side: workspace controls
+    let ws_new = gtk::Button::from_icon_name("tab-new-symbolic");
+    ws_new.set_tooltip_text(Some("New Workspace (Ctrl+N)"));
+    let ws_close = gtk::Button::from_icon_name("window-close-symbolic");
+    ws_close.set_tooltip_text(Some("Close Workspace (Ctrl+Shift+W)"));
+    let ws_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    ws_box.append(&ws_new);
+    ws_box.append(&ws_close);
+    header.pack_start(&ws_box);
 
-    let new_window = gtk::Button::with_label("New Window");
-    let close_window = gtk::Button::with_label("Close Window");
-    let new_workspace = gtk::Button::with_label("New Workspace");
-    let close_workspace = gtk::Button::with_label("Close Workspace");
-    let split_right = gtk::Button::with_label("Split Right");
-    let split_down = gtk::Button::with_label("Split Down");
-    let new_surface = gtk::Button::with_label("New Surface");
-    let close_surface = gtk::Button::with_label("Close Surface");
+    // Right side: split / surface controls
+    let split_h = gtk::Button::from_icon_name("object-flip-horizontal-symbolic");
+    split_h.set_tooltip_text(Some("Split Right (Ctrl+D)"));
+    let split_v = gtk::Button::from_icon_name("object-flip-vertical-symbolic");
+    split_v.set_tooltip_text(Some("Split Down (Ctrl+Shift+D)"));
+    let surf_new = gtk::Button::from_icon_name("list-add-symbolic");
+    surf_new.set_tooltip_text(Some("New Tab (Ctrl+T)"));
+    let surf_close = gtk::Button::from_icon_name("list-remove-symbolic");
+    surf_close.set_tooltip_text(Some("Close Tab (Ctrl+W)"));
 
-    for button in [
-        &new_window,
-        &close_window,
-        &new_workspace,
-        &close_workspace,
-        &split_right,
-        &split_down,
-        &new_surface,
-        &close_surface,
-    ] {
-        controls.append(button);
-    }
+    let right_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    right_box.append(&split_h);
+    right_box.append(&split_v);
+    let sep = gtk::Separator::new(gtk::Orientation::Vertical);
+    sep.set_margin_start(4);
+    sep.set_margin_end(4);
+    right_box.append(&sep);
+    right_box.append(&surf_new);
+    right_box.append(&surf_close);
+    header.pack_end(&right_box);
 
-    let sidebar_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    sidebar_box.set_margin_top(8);
-    sidebar_box.set_margin_bottom(8);
-    sidebar_box.set_margin_start(8);
-    sidebar_box.set_margin_end(8);
+    let sidebar_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    sidebar_box.set_margin_top(6);
+    sidebar_box.set_margin_bottom(6);
+    sidebar_box.set_margin_start(6);
+    sidebar_box.set_margin_end(6);
 
     let sidebar_width = model.lock().config.sidebar_width;
 
@@ -549,23 +567,13 @@ fn create_window_shell(
     main_split.set_start_child(Some(&sidebar));
     main_split.set_end_child(Some(&content_box));
 
-    let banner = gtk::Label::new(Some(&banner_text));
-    banner.add_css_class("dim-label");
-    banner.set_margin_top(8);
-    banner.set_margin_bottom(8);
-    banner.set_margin_start(12);
-    banner.set_margin_end(12);
-    banner.set_xalign(0.0);
-
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(&header);
-    root.append(&controls);
-    root.append(&banner);
     root.append(&main_split);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("cmux Linux")
+        .title("cmux")
         .default_width(1400)
         .default_height(900)
         .content(&root)
@@ -583,70 +591,12 @@ fn create_window_shell(
         });
     }
 
-    connect_window_action_button(
-        &new_window,
-        app,
-        &model,
-        &terminal_runtime,
-        window_id,
-        "window-new",
-    );
-    connect_window_action_button(
-        &close_window,
-        app,
-        &model,
-        &terminal_runtime,
-        window_id,
-        "window-close",
-    );
-    connect_window_action_button(
-        &new_workspace,
-        app,
-        &model,
-        &terminal_runtime,
-        window_id,
-        "workspace-new",
-    );
-    connect_window_action_button(
-        &close_workspace,
-        app,
-        &model,
-        &terminal_runtime,
-        window_id,
-        "workspace-close",
-    );
-    connect_window_action_button(
-        &split_right,
-        app,
-        &model,
-        &terminal_runtime,
-        window_id,
-        "split-right",
-    );
-    connect_window_action_button(
-        &split_down,
-        app,
-        &model,
-        &terminal_runtime,
-        window_id,
-        "split-down",
-    );
-    connect_window_action_button(
-        &new_surface,
-        app,
-        &model,
-        &terminal_runtime,
-        window_id,
-        "surface-new",
-    );
-    connect_window_action_button(
-        &close_surface,
-        app,
-        &model,
-        &terminal_runtime,
-        window_id,
-        "surface-close",
-    );
+    connect_window_action_button(&ws_new, app, &model, &terminal_runtime, window_id, "workspace-new");
+    connect_window_action_button(&ws_close, app, &model, &terminal_runtime, window_id, "workspace-close");
+    connect_window_action_button(&split_h, app, &model, &terminal_runtime, window_id, "split-right");
+    connect_window_action_button(&split_v, app, &model, &terminal_runtime, window_id, "split-down");
+    connect_window_action_button(&surf_new, app, &model, &terminal_runtime, window_id, "surface-new");
+    connect_window_action_button(&surf_close, app, &model, &terminal_runtime, window_id, "surface-close");
 
     window.present();
     WindowShell {
@@ -740,7 +690,7 @@ fn render_sidebar(
         workspace_id,
         title,
         current_directory,
-        pane_count,
+        _pane_count,
         surface_count,
         unread_count,
         selected,
@@ -748,35 +698,34 @@ fn render_sidebar(
     {
         let title_label = gtk::Label::new(Some(&title));
         title_label.set_xalign(0.0);
-        title_label.add_css_class("heading");
+        title_label.add_css_class("workspace-title");
 
-        let meta_label = gtk::Label::new(Some(&format!(
-            "{pane_count} panes | {surface_count} surfaces | {unread_count} unread"
-        )));
-        meta_label.set_xalign(0.0);
-        meta_label.add_css_class("dim-label");
+        let mut meta_parts = Vec::new();
+        if surface_count > 1 {
+            meta_parts.push(format!("{surface_count} tabs"));
+        }
+        if unread_count > 0 {
+            meta_parts.push(format!("{unread_count} unread"));
+        }
+        if let Some(ref cwd) = current_directory {
+            if let Some(dir_name) = std::path::Path::new(cwd).file_name() {
+                meta_parts.push(dir_name.to_string_lossy().into_owned());
+            }
+        }
+        let meta_text = if meta_parts.is_empty() {
+            String::new()
+        } else {
+            meta_parts.join(" · ")
+        };
 
-        let id_label = gtk::Label::new(Some(&format!("workspace {}", short_id(workspace_id))));
-        id_label.set_xalign(0.0);
-        id_label.add_css_class("caption");
-
-        let cwd_label = current_directory.map(|cwd| {
-            let label = gtk::Label::new(Some(&cwd));
-            label.set_xalign(0.0);
-            label.add_css_class("caption");
-            label
-        });
-
-        let row_content = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        row_content.set_margin_top(10);
-        row_content.set_margin_bottom(10);
-        row_content.set_margin_start(12);
-        row_content.set_margin_end(12);
+        let row_content = gtk::Box::new(gtk::Orientation::Vertical, 2);
         row_content.append(&title_label);
-        row_content.append(&meta_label);
-        row_content.append(&id_label);
-        if let Some(cwd_label) = cwd_label.as_ref() {
-            row_content.append(cwd_label);
+        if !meta_text.is_empty() {
+            let meta_label = gtk::Label::new(Some(&meta_text));
+            meta_label.set_xalign(0.0);
+            meta_label.add_css_class("workspace-meta");
+            meta_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            row_content.append(&meta_label);
         }
 
         let button = gtk::ToggleButton::new();
@@ -784,6 +733,8 @@ fn render_sidebar(
         button.set_child(Some(&row_content));
         button.set_halign(gtk::Align::Fill);
         button.set_hexpand(true);
+        button.add_css_class("sidebar-workspace");
+        button.add_css_class("flat");
 
         let model = model.clone();
         let terminal_runtime = terminal_runtime.clone();
@@ -812,31 +763,6 @@ fn render_workspace_content(
     let Some(workspace) = workspace else {
         return;
     };
-
-    let selected_pane_summary = workspace
-        .selected_pane()
-        .map(|pane| format!("selected pane {}", short_id(pane.id)))
-        .unwrap_or_else(|| "no selected pane".to_string());
-
-    let header = gtk::Label::new(Some(&format!(
-        "{} | {} panes | {} surfaces | {}{}",
-        workspace.title,
-        workspace.pane_count(),
-        workspace.surface_count(),
-        selected_pane_summary,
-        workspace
-            .current_directory
-            .as_ref()
-            .map(|cwd| format!(" | cwd={cwd}"))
-            .unwrap_or_default(),
-    )));
-    header.add_css_class("title-3");
-    header.set_xalign(0.0);
-    header.set_margin_top(12);
-    header.set_margin_bottom(12);
-    header.set_margin_start(12);
-    header.set_margin_end(12);
-    content_box.append(&header);
 
     let layout_widget =
         build_workspace_layout(model, terminal_runtime, &workspace, &workspace.layout);
@@ -892,22 +818,13 @@ fn build_workspace_layout(
 fn build_pane_view(
     model: &SharedModel,
     terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
-    workspace_id: WorkspaceId,
+    _workspace_id: WorkspaceId,
     pane: &Pane,
 ) -> gtk::Widget {
     let notebook = gtk::Notebook::new();
     notebook.set_scrollable(true);
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
-    let selected_surface_title = pane
-        .selected_surface()
-        .map(|surface| surface.title.clone())
-        .unwrap_or_else(|| "No surface".to_string());
-    let unread_count = pane
-        .surfaces
-        .iter()
-        .filter(|surface| surface.unread)
-        .count();
 
     for surface in &pane.surfaces {
         let page = build_surface_view(terminal_runtime, surface);
@@ -939,17 +856,8 @@ fn build_pane_view(
         notebook.set_current_page(Some(index as u32));
     }
 
-    let frame = gtk::Frame::new(Some(&format!(
-        "Pane {} | workspace {} | selected: {} | unread={}",
-        short_id(pane.id),
-        short_id(workspace_id),
-        selected_surface_title,
-        unread_count,
-    )));
-    frame.set_margin_top(12);
-    frame.set_margin_bottom(12);
-    frame.set_margin_start(12);
-    frame.set_margin_end(12);
+    let frame = gtk::Frame::new(None::<&str>);
+    frame.add_css_class("pane-frame");
     frame.set_hexpand(true);
     frame.set_vexpand(true);
     frame.set_child(Some(&notebook));
@@ -960,7 +868,7 @@ fn build_surface_view(
     terminal_runtime: &Rc<RefCell<TerminalRuntime>>,
     surface: &Surface,
 ) -> gtk::Widget {
-    let (backend_name, host_widget) = {
+    let (_backend_name, host_widget) = {
         let mut runtime = terminal_runtime.borrow_mut();
         (
             runtime.backend_name().to_string(),
@@ -972,33 +880,7 @@ fn build_surface_view(
     }
     host_widget.set_hexpand(true);
     host_widget.set_vexpand(true);
-
-    let title = gtk::Label::new(Some(&format!(
-        "{} | unread={} | flash_count={}",
-        surface.title, surface.unread, surface.flash_count
-    )));
-    title.set_xalign(0.0);
-    title.add_css_class("heading");
-
-    let backend = gtk::Label::new(Some(&format!(
-        "backend={} | supported=vte | surface_id={} | readback_bytes={}",
-        backend_name,
-        short_id(surface.id),
-        surface.transcript.len(),
-    )));
-    backend.set_xalign(0.0);
-    backend.add_css_class("dim-label");
-
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    content.set_margin_top(12);
-    content.set_margin_bottom(12);
-    content.set_margin_start(12);
-    content.set_margin_end(12);
-    content.append(&title);
-    content.append(&backend);
-    content.append(&host_widget);
-
-    content.upcast::<gtk::Widget>()
+    host_widget.upcast::<gtk::Widget>()
 }
 
 fn missing_pane_widget(pane_id: PaneId) -> gtk::Widget {
